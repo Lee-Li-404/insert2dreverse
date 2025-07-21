@@ -1,0 +1,20 @@
+{
+  "name": "pandora",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "vite": "^6.3.5"
+  },
+  "dependencies": {
+    "file-saver": "^2.0.5",
+    "gsap": "^3.13.0",
+    "jszip": "^3.10.1",
+    "three": "^0.176.0"
+  }
+}
