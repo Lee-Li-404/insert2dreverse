@@ -83,23 +83,8 @@ const audioCtx = new AudioContext({ sampleRate: 24000 });
 const playQueue = []; // 播放队列，避免卡顿
 
 // 创建 WebSocket 接收后端音频数据
-const audioSocket = new WebSocket(
-  "wss://realtimedialogue-hey.onrender.com/ws/tts"
-);
+const audioSocket = new WebSocket("wss://realtimedialogue.onrender.com/ws/tts");
 audioSocket.binaryType = "arraybuffer";
-
-audioSocket.onopen = () => {
-  console.log("✅ WebSocket 已连接到 TTS 服务");
-};
-
-// ❌ 连接失败或断开时
-audioSocket.onerror = (err) => {
-  console.error("🚫 WebSocket 连接错误:", err);
-};
-
-audioSocket.onclose = (event) => {
-  console.warn("⚠️ WebSocket 已关闭:", event.code, event.reason);
-};
 
 audioSocket.onmessage = async (event) => {
   const arrayBuffer = event.data;
@@ -550,7 +535,7 @@ let currentEventId = null;
 async function pollBackendStatus() {
   try {
     const response = await fetch(
-      "https://realtimedialogue-hey.onrender.com/status"
+      "https://realtimedialogue.onrender.com/status"
     ); // 或你的服务地址
     const data = await response.json();
     const eventId = data.event_id;
@@ -626,7 +611,7 @@ setInterval(pollBackendStatus, 4000);
 
 //麦克风输入
 let micStream;
-let socket = new WebSocket("wss://realtimedialogue-hey.onrender.com/ws/audio");
+let socket = new WebSocket("wss://realtimedialogue.onrender.com/ws/audio");
 socket.binaryType = "arraybuffer";
 
 // Float32 → Int16 转换函数
