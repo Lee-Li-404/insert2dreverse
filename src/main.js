@@ -644,3 +644,29 @@ socket.onopen = async () => {
     }
   };
 };
+
+const startBtn = document.getElementById("startBtn");
+const stopBtn = document.getElementById("stopBtn");
+
+startBtn.onclick = () => {
+  fetch("https://realtimedialogue.onrender.com/start", {
+    method: "POST",
+  }).catch((err) => console.error("❌ Start error:", err));
+
+  // 🌟 一秒后刷新页面
+  setTimeout(() => {
+    location.reload();
+  }, 1000);
+};
+
+stopBtn.onclick = async () => {
+  try {
+    const res = await fetch("https://realtimedialogue.onrender.com/stop", {
+      method: "POST",
+    });
+    const data = await res.json();
+    console.log("🛑 Stop Response:", data);
+  } catch (err) {
+    console.error("❌ Stop error:", err);
+  }
+};
