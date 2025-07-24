@@ -669,4 +669,9 @@ stopBtn.onclick = async () => {
   } catch (err) {
     console.error("❌ Stop error:", err);
   }
+
+  // 🌟 一秒后刷新页面
+  setTimeout(() => {
+    location.reload();
+  }, 1000);
 };
