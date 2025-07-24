@@ -656,7 +656,7 @@ startBtn.onclick = () => {
   // 🌟 一秒后刷新页面
   setTimeout(() => {
     location.reload();
-  }, 1000);
+  }, 3000);
 };
 
 stopBtn.onclick = async () => {
