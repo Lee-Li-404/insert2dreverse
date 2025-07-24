@@ -79,6 +79,10 @@ scene.add(light3);
 const globalAudioCtx = new (window.AudioContext || window.webkitAudioContext)({
   sampleRate: 24000,
 });
+const analyserNode = globalAudioCtx.createAnalyser();
+analyserNode.fftSize = 256;
+const audioDataArray = new Float32Array(analyserNode.fftSize);
+
 const audioCtx = new AudioContext({ sampleRate: 24000 });
 const playQueue = []; // 播放队列，避免卡顿
 
@@ -119,33 +123,38 @@ document.body.addEventListener(
   () => {
     if (audioCtx.state !== "running") {
       audioCtx.resume();
-      console.log("🔊 AudioContext resumed");
+      console.log("🔊 audioCtx resumed");
+    }
+    if (globalAudioCtx.state !== "running") {
+      globalAudioCtx.resume();
+      console.log("🔊 globalAudioCtx resumed");
     }
   },
   { once: true }
-); // ⚠️ 只触发一次即可
+);
 
 let isPlaying = false;
 
 function playFromQueue() {
-  if (isPlaying || playQueue.length === 0 || audioCtx.state !== "running")
+  if (isPlaying || playQueue.length === 0 || globalAudioCtx.state !== "running")
     return;
 
   const buffer = playQueue.shift();
-  const source = audioCtx.createBufferSource();
+  const source = globalAudioCtx.createBufferSource();
   source.buffer = buffer;
-  source.connect(audioCtx.destination);
+
+  // ✅ 连接到 analyser，再连到扬声器
+  source.connect(analyserNode);
+  analyserNode.connect(globalAudioCtx.destination);
 
   isPlaying = true;
 
   source.onended = () => {
     isPlaying = false;
-    console.log("✅ 播放完成");
-    playFromQueue(); // 播完一个再尝试下一个
+    playFromQueue();
   };
 
   source.start();
-  console.log("▶️ 开始播放，长度:", buffer.duration);
 }
 
 // === Create cubes ===
@@ -439,9 +448,14 @@ function animate() {
   if (isBreathing) {
     let targetSpeed;
     let norm = 0; // 兜底
-    if (useRemoteRMS && remoteVolumes && remoteVolumes.length > 0) {
-      // 1. 平滑RMS
-      let currRms = remoteVolumes[remoteVolumes.length - 1];
+    if (useRemoteRMS) {
+      analyserNode.getFloatTimeDomainData(audioDataArray); // 实时读取播放中的样本
+      let sum = 0;
+      for (let i = 0; i < audioDataArray.length; i++) {
+        sum += audioDataArray[i] * audioDataArray[i];
+      }
+      let currRms = Math.sqrt(sum / audioDataArray.length); // 当前播放声音的 RMS
+
       lastSmoothRms = lastSmoothRms * 0.8 + currRms * 0.2;
       // 2. 归一化
       norm = lastSmoothRms > NOISE_FLOOR ? lastSmoothRms / RMS_MAX : 0;
