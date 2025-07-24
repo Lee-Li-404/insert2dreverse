@@ -621,7 +621,7 @@ function handleEvent(eventId, text) {
 }
 
 // 每 100ms 轮询一次
-setInterval(pollBackendStatus, 4000);
+setInterval(pollBackendStatus, 100);
 
 //麦克风输入
 let micStream;
