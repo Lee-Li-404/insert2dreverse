@@ -468,7 +468,7 @@ function animate() {
       }
       console.log(lastSpeed);
     } else {
-      targetSpeed = isActive ? 0.05 : 0.013;
+      targetSpeed = isActive ? 0.075 : 0.013;
       console.log(targetSpeed);
       norm = 0.5;
       // norm 保持为0即可

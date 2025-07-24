@@ -52,7 +52,7 @@ export function rotate180(
   onComplete
 ) {
   const axis = faceAxes[face];
-  const steps = 48 * 1.5;
+  const steps = 36;
   const totalAngle = Math.PI;
   const delta = totalAngle / steps;
   let step = 0;
