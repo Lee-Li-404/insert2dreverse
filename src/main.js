@@ -480,7 +480,7 @@ function animate() {
     const wave = (Math.sin(phase - Math.PI / 2) + 1) / 2;
 
     // 7. 动态最大伸缩幅度
-    const minAmplitude = 1.5;
+    const minAmplitude = 1.2;
     const maxAmplitude = 7;
     let dynamicAmplitude = minAmplitude + (maxAmplitude - minAmplitude) * norm;
 
