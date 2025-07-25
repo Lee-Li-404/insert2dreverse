@@ -43,14 +43,11 @@ gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
 
 //加入声波RMS
 let useRemoteRMS = false;
-let remoteVolumes = null;
 let RMS_MAX = 0.05; // 固定经验值
 let NOISE_FLOOR = 0.009;
 let lastSmoothRms = 0; // 平滑后的RMS
 let lastSpeed = 0.04; // 平滑后的speed
-const lerpAlpha = 0.3; // speed平滑系数
 let lastMotionScale = 1; // 初始幅度，设你动效一开始的缩放即可
-const motionLerpAlpha = 0.2; // motionScale 平滑力度，范围0.1~0.3，越小越顺
 let phase = 0;
 
 let doRotation = false;
@@ -135,26 +132,25 @@ document.body.addEventListener(
 
 let isPlaying = false;
 
+let nextPlayTime = globalAudioCtx.currentTime;
+
 function playFromQueue() {
-  if (isPlaying || playQueue.length === 0 || globalAudioCtx.state !== "running")
-    return;
+  if (isPlaying || playQueue.length === 0) return;
 
   const buffer = playQueue.shift();
   const source = globalAudioCtx.createBufferSource();
   source.buffer = buffer;
-
-  // ✅ 连接到 analyser，再连到扬声器
   source.connect(analyserNode);
   analyserNode.connect(globalAudioCtx.destination);
 
-  isPlaying = true;
+  source.start(nextPlayTime); // 🎯 不立即播，而是排队播
+  nextPlayTime += buffer.duration;
 
+  isPlaying = true;
   source.onended = () => {
     isPlaying = false;
     playFromQueue();
   };
-
-  source.start();
 }
 
 // === Create cubes ===
@@ -466,10 +462,10 @@ function animate() {
       if (Math.abs(targetSpeed - lastSpeed) > 0.012) {
         targetSpeed = lastSpeed + 0.012 * Math.sign(targetSpeed - lastSpeed);
       }
-      console.log(lastSpeed);
+      // console.log(lastSpeed);
     } else {
       targetSpeed = isActive ? 0.075 : 0.013;
-      console.log(targetSpeed);
+      // console.log(targetSpeed);
       norm = 0.5;
       // norm 保持为0即可
     }
@@ -550,9 +546,16 @@ async function pollBackendStatus() {
   try {
     const response = await fetch(
       "https://realtimedialogue.onrender.com/status"
-    ); // 或你的服务地址
+    );
     const data = await response.json();
-    const eventId = data.event_id;
+    let eventId = data.event_id;
+
+    // ✅ 自动修复：如果播放结束但后端还没更新 event_id
+    const audioIdle = playQueue.length === 0 && !isPlaying;
+    if (eventId === 359 && audioIdle) {
+      console.log("✅ 音频播放完毕，自动切换为 event_id 999");
+      eventId = 999;
+    }
 
     if (eventId !== currentEventId) {
       currentEventId = eventId;
@@ -670,7 +673,7 @@ startBtn.onclick = () => {
   // 🌟 一秒后刷新页面
   setTimeout(() => {
     location.reload();
-  }, 3000);
+  }, 2000);
 };
 
 stopBtn.onclick = async () => {
