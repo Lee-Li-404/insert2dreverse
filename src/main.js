@@ -44,7 +44,7 @@ gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
 //加入声波RMS
 let useRemoteRMS = false;
 let remoteVolumes = null;
-let RMS_MAX = 0.06; // 固定经验值
+let RMS_MAX = 0.05; // 固定经验值
 let NOISE_FLOOR = 0.009;
 let lastSmoothRms = 0; // 平滑后的RMS
 let lastSpeed = 0.04; // 平滑后的speed
@@ -456,12 +456,12 @@ function animate() {
       }
       let currRms = Math.sqrt(sum / audioDataArray.length); // 当前播放声音的 RMS
 
-      lastSmoothRms = lastSmoothRms * 0.8 + currRms * 0.2;
+      lastSmoothRms = lastSmoothRms * 0.7 + currRms * 0.3;
       // 2. 归一化
       norm = lastSmoothRms > NOISE_FLOOR ? lastSmoothRms / RMS_MAX : 0;
       norm = Math.max(0, Math.min(1, norm)); // clamp to 0~1
       // 3. 推导speed
-      targetSpeed = 0.013 + 0.1 * norm;
+      targetSpeed = 0.013 + 0.32 * norm;
       // 4. Clamp跳变
       if (Math.abs(targetSpeed - lastSpeed) > 0.012) {
         targetSpeed = lastSpeed + 0.012 * Math.sign(targetSpeed - lastSpeed);
@@ -484,8 +484,8 @@ function animate() {
     const wave = (Math.sin(phase - Math.PI / 2) + 1) / 2;
 
     // 7. 动态最大伸缩幅度
-    const minAmplitude = 1.3;
-    const maxAmplitude = 6.4;
+    const minAmplitude = 1.5;
+    const maxAmplitude = 7;
     let dynamicAmplitude = minAmplitude + (maxAmplitude - minAmplitude) * norm;
 
     let rawMotionScale = dynamicAmplitude * wave;
