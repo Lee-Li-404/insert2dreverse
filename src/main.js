@@ -716,4 +716,4 @@ setTimeout(() => {
       console.error("❌ 自动 Stop 请求失败:", err);
       window.location.href = "/thankyou.html"; // 或你的主页/提示页
     });
-}, 10 * 1000); // 60秒
+}, 5 * 60 * 1000); // 60秒
