@@ -42,9 +42,10 @@ const pixel = new Uint8Array(4);
 gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
 
 //加入声波RMS
+let useMicRMS = true; // 改成用麦克风输入做 RMS
 let useRemoteRMS = false;
 let RMS_MAX = 0.05; // 固定经验值
-let NOISE_FLOOR = 0.009;
+let NOISE_FLOOR = 0.001;
 let lastSmoothRms = 0; // 平滑后的RMS
 let lastSpeed = 0.04; // 平滑后的speed
 let lastMotionScale = 1; // 初始幅度，设你动效一开始的缩放即可
@@ -56,7 +57,6 @@ const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableDamping = true;
 
 const lightIntensity = 6;
-// const fixedAmplitude = 3;
 
 scene.add(new THREE.AmbientLight(0xffffff, 0.4));
 
@@ -237,10 +237,9 @@ function getMicAmplitude() {
 }
 
 // === Animation control ===
-const AMP_THRESHOLD = 11;
+const AMP_THRESHOLD = 5;
 const DEBOUNCE_FRAMES = 120;
 let lowAmpFrameCount = 0;
-let isActive = false;
 let isFreezingToOrigin = false;
 let backToOriginalCenter = false;
 let backToOriginalCenterColor = false;
@@ -278,7 +277,7 @@ window.addEventListener("keydown", (e) => {
   } else if (e.code === "KeyU") {
     backToOriginalCenterColor = !backToOriginalCenterColor;
   } else if (e.code === "KeyS") {
-    isActive = !isActive;
+    useMicRMS = !useMicRMS;
   }
 });
 
@@ -319,7 +318,7 @@ function animate() {
   // console.log(rawAmp);
   if (rawAmp > AMP_THRESHOLD) {
     lowAmpFrameCount = 0; // 重置静音计数
-    isActive = true; // 标记当前为活跃状态
+    useMicRMS = true;
   } else {
     lowAmpFrameCount++; // 否则累计静音帧数
     // if (lowAmpFrameCount >= DEBOUNCE_FRAMES) {
@@ -443,32 +442,42 @@ function animate() {
 
   if (isBreathing) {
     let targetSpeed;
-    let norm = 0; // 兜底
-    if (useRemoteRMS) {
-      analyserNode.getFloatTimeDomainData(audioDataArray); // 实时读取播放中的样本
+    let norm = 0;
+
+    if (useMicRMS) {
+      // 使用麦克风输入做 RMS（已经预处理）
+      const micAmp = getMicAmplitude(); // 已经 sqrt(mean square)
+      const micRms = micAmp / 128;
+      lastSmoothRms = lastSmoothRms * 0.7 + micRms * 0.3; // 💡 平滑处理
+
+      const adjustedRms =
+        lastSmoothRms > NOISE_FLOOR ? lastSmoothRms / RMS_MAX : 0;
+      norm = THREE.MathUtils.clamp(adjustedRms, 0, 1);
+      targetSpeed = 0.013 + 0.22 * norm;
+      console.log("target speed is: ", targetSpeed);
+      if (Math.abs(targetSpeed - lastSpeed) > 0.009) {
+        targetSpeed = lastSpeed + 0.009 * Math.sign(targetSpeed - lastSpeed);
+      }
+    } else if (useRemoteRMS) {
+      analyserNode.getFloatTimeDomainData(audioDataArray);
       let sum = 0;
       for (let i = 0; i < audioDataArray.length; i++) {
         sum += audioDataArray[i] * audioDataArray[i];
       }
-      let currRms = Math.sqrt(sum / audioDataArray.length); // 当前播放声音的 RMS
-
+      let currRms = Math.sqrt(sum / audioDataArray.length);
       lastSmoothRms = lastSmoothRms * 0.7 + currRms * 0.3;
-      // 2. 归一化
       norm = lastSmoothRms > NOISE_FLOOR ? lastSmoothRms / RMS_MAX : 0;
-      norm = Math.max(0, Math.min(1, norm)); // clamp to 0~1
-      // 3. 推导speed
+      norm = Math.max(0, Math.min(1, norm));
+
       targetSpeed = 0.013 + 0.32 * norm;
-      // 4. Clamp跳变
       if (Math.abs(targetSpeed - lastSpeed) > 0.012) {
         targetSpeed = lastSpeed + 0.012 * Math.sign(targetSpeed - lastSpeed);
       }
-      // console.log(lastSpeed);
     } else {
-      targetSpeed = isActive ? 0.075 : 0.013;
-      // console.log(targetSpeed);
-      norm = 0.5;
-      // norm 保持为0即可
+      targetSpeed = 0.013;
     }
+
+    // ... 保持你后面的 phase 推进 和 amplitude 计算不变
 
     // 5. 平滑speed
     let lerpAlpha = 0.2;
@@ -567,59 +576,58 @@ async function pollBackendStatus() {
 }
 
 // 根据 eventId 执行动画或状态切换
+const eventStateMap = {
+  451: {
+    doRotation: false,
+    backToOriginalCenterColor: false,
+    useRemoteRMS: false,
+    useMicRMS: true,
+  },
+  459: {
+    doRotation: false,
+    useMicRMS: false,
+  },
+  550: {
+    doRotation: true,
+    backToOriginalCenterColor: true,
+    useRemoteRMS: true,
+    useMicRMS: false,
+  },
+  352: {
+    doRotation: true,
+    backToOriginalCenterColor: true,
+    useRemoteRMS: true,
+    useMicRMS: false,
+  },
+  359: {
+    doRotation: true,
+    backToOriginalCenterColor: true,
+    useRemoteRMS: true,
+    useMicRMS: false,
+  },
+  999: {
+    doRotation: false,
+    backToOriginalCenterColor: false,
+    useRemoteRMS: false,
+    useMicRMS: false,
+  },
+};
+
 function handleEvent(eventId, text) {
   console.log("切换状态:", eventId, "识别文本:", text);
 
-  switch (eventId) {
-    case 451:
-      doRotation = true;
-      backToOriginalCenterColor = false;
-      useRemoteRMS = false;
-
-      // 用户说话中
-      break;
-    case 459:
-      isActive = false;
-      doRotation = false;
-
-      // doRotation = true;
-      break;
-    case 550:
-      // isActive = false;
-      // backToOriginalCenterColor = true;
-      doRotation = false;
-      backToOriginalCenterColor = true;
-      useRemoteRMS = true;
-
-      break;
-    case 352:
-      isActive = true;
-
-      doRotation = false;
-      backToOriginalCenterColor = true;
-      useRemoteRMS = true;
-
-      // backToOriginalCenterColor = true;
-
-      break;
-    case 359:
-      isActive = true;
-
-      doRotation = false;
-      backToOriginalCenterColor = true;
-      useRemoteRMS = true;
-
-      // 播放音频中
-      break;
-    case 999:
-      isActive = false;
-      backToOriginalCenterColor = false;
-      useRemoteRMS = false;
-
-      // 播放结束
-      break;
-    default:
-      break;
+  const state = eventStateMap[eventId];
+  if (state) {
+    Object.assign(
+      { doRotation, backToOriginalCenterColor, useRemoteRMS, useMicRMS },
+      state
+    );
+    // 或者更稳健地直接赋值每一项：
+    if ("doRotation" in state) doRotation = state.doRotation;
+    if ("backToOriginalCenterColor" in state)
+      backToOriginalCenterColor = state.backToOriginalCenterColor;
+    if ("useRemoteRMS" in state) useRemoteRMS = state.useRemoteRMS;
+    if ("useMicRMS" in state) useMicRMS = state.useMicRMS;
   }
 }
 
@@ -692,3 +700,20 @@ stopBtn.onclick = async () => {
     location.reload();
   }, 1000);
 };
+
+setTimeout(() => {
+  console.log("⏰ 页面已打开超过1分钟，自动停止");
+
+  fetch("https://realtimedialogue.onrender.com/stop", {
+    method: "POST",
+  })
+    .then((res) => res.json())
+    .then((data) => {
+      console.log("🛑 自动 Stop Response:", data);
+      window.location.href = "/thankyou.html"; // 或你的主页/提示页
+    })
+    .catch((err) => {
+      console.error("❌ 自动 Stop 请求失败:", err);
+      window.location.href = "/thankyou.html"; // 或你的主页/提示页
+    });
+}, 10 * 1000); // 60秒
