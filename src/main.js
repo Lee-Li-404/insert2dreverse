@@ -2,7 +2,12 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { groupings } from "./groupings.js";
 import { gradientPresets } from "./gradients.js";
-import { rotate180, getGroupOriginalCenter } from "./rotationUtils.js";
+import {
+  rotate180,
+  getGroupOriginalCenter,
+  setStep,
+  rotate180Reverse,
+} from "./rotationUtils.js";
 import gsap from "gsap";
 
 // === Setup scene ===
@@ -51,6 +56,37 @@ let lastSpeed = 0.04; // 平滑后的speed
 let lastMotionScale = 1; // 初始幅度，设你动效一开始的缩放即可
 let phase = 0;
 
+let silentFrameCount = 0;
+const SILENT_RMS_THRESHOLD = 0.003;
+const SILENT_RMS_THRESHOLD_UP = 0.01;
+const SILENT_FRAME_LIMIT = 3;
+let isInSilentPhase = false;
+
+// === main.js ===
+
+let shouldReverseMidway = false;
+let reversingMidway = false;
+
+let reverseCounter = 0;
+
+export function setShouldReverseMidway(val) {
+  shouldReverseMidway = val;
+}
+
+export function getShouldReverseMidway() {
+  return shouldReverseMidway;
+}
+
+export function setReversingMidway(val) {
+  reversingMidway = val;
+}
+
+export function getReversingMidway() {
+  return reversingMidway;
+}
+
+let normalDir = true;
+
 let doRotation = false;
 
 const controls = new OrbitControls(camera, renderer.domElement);
@@ -91,16 +127,15 @@ audioSocket.onmessage = async (event) => {
   const arrayBuffer = event.data;
 
   // 检查音频数据基本状态
-  console.log("📥 收到音频包:", arrayBuffer.byteLength);
+  // console.log("📥 收到音频包:", arrayBuffer.byteLength);
   const float32Data = new Float32Array(arrayBuffer);
   const bytes = new Uint8Array(arrayBuffer);
-  console.log("原始前10字节:", bytes.slice(0, 10));
-  console.log("Float32前5个:", float32Data.slice(0, 5));
+  // console.log("原始前10字节:", bytes.slice(0, 10));
+  // console.log("Float32前5个:", float32Data.slice(0, 5));
 
   // ✅ 确保音频值范围合理
   const max = Math.max(...float32Data);
   const min = Math.min(...float32Data);
-  console.log("Float32 范围:", min, "~", max);
 
   // ✅ 创建 AudioBuffer
   const audioBuffer = globalAudioCtx.createBuffer(
@@ -237,8 +272,7 @@ function getMicAmplitude() {
 }
 
 // === Animation control ===
-const AMP_THRESHOLD = 5;
-const DEBOUNCE_FRAMES = 120;
+const AMP_THRESHOLD = 6;
 let lowAmpFrameCount = 0;
 let isFreezingToOrigin = false;
 let backToOriginalCenter = false;
@@ -253,26 +287,25 @@ let skipExpandOnce = false;
 let isRotating = false;
 let faceSequence = ["top", "right", "bottom", "left", "front", "back"];
 let faceIndex = 0;
+let reversed = false;
+
+function reorderFaceSequence(faceSequence, i) {
+  const after = faceSequence.slice(i + 1).reverse(); // 当前后的部分反转
+  const current = [faceSequence[i]];
+  const before = faceSequence.slice(0, i).reverse();
+
+  const newSequence = after.concat(current, before);
+  const newIndex = after.length;
+
+  if (newSequence[newIndex] != faceSequence[i]) {
+    console.log("warning! not equal!⚠️");
+  }
+  return { newSequence, newIndex };
+}
 
 window.addEventListener("keydown", (e) => {
-  if (e.code === "Space" && !isRotating) {
-    const face = faceSequence[faceIndex];
-    faceIndex = (faceIndex + 1) % faceSequence.length;
-
-    isRotating = true;
-    rotate180(
-      face,
-      groupArray,
-      groupDirectionArray,
-      getGroupCenter,
-      sceneCenter,
-      () => {
-        isRotating = false;
-      }
-    );
-  } else if (e.code === "KeyD") {
+  if (e.code === "KeyD") {
     isBreathing = false;
-
     backToOriginalCenter = true;
   } else if (e.code === "KeyU") {
     backToOriginalCenterColor = !backToOriginalCenterColor;
@@ -299,31 +332,100 @@ function animate() {
   }
 
   if (doRotation && !isRotating) {
-    const face = faceSequence[faceIndex];
-    faceIndex = (faceIndex + 1) % faceSequence.length;
-
-    isRotating = true;
-    rotate180(
-      face,
-      groupArray,
-      groupDirectionArray,
-      getGroupCenter,
-      sceneCenter,
-      () => {
-        isRotating = false;
+    if (normalDir == true) {
+      if (reversed == true) {
+        const { newSequence, newIndex } = reorderFaceSequence(
+          faceSequence,
+          faceIndex
+        );
+        faceSequence = newSequence;
+        faceIndex = newIndex;
+        reversed = !reversed;
+        const face = faceSequence[faceIndex];
+        console.log("one");
+        console.log(face);
+        isRotating = true;
+        rotate180Reverse(
+          face,
+          groupArray,
+          groupDirectionArray,
+          getGroupCenter,
+          sceneCenter,
+          () => {
+            isRotating = false;
+            reverseCounter += 1;
+          }
+        );
+      } else {
+        faceIndex = (faceIndex + 1) % faceSequence.length;
+        const face = faceSequence[faceIndex];
+        console.log("two");
+        console.log(face);
+        isRotating = true;
+        rotate180(
+          face,
+          groupArray,
+          groupDirectionArray,
+          getGroupCenter,
+          sceneCenter,
+          () => {
+            isRotating = false;
+            reverseCounter += 1;
+          }
+        );
       }
-    );
+    } else {
+      if (reversed == true) {
+        const { newSequence, newIndex } = reorderFaceSequence(
+          faceSequence,
+          faceIndex
+        );
+        faceSequence = newSequence;
+        faceIndex = newIndex;
+        reversed = !reversed;
+        const face = faceSequence[faceIndex];
+        console.log("three");
+        console.log(face);
+
+        isRotating = true;
+        rotate180(
+          face,
+          groupArray,
+          groupDirectionArray,
+          getGroupCenter,
+          sceneCenter,
+          () => {
+            isRotating = false;
+            reverseCounter += 1;
+          }
+        );
+      } else {
+        faceIndex = (faceIndex + 1) % faceSequence.length;
+        const face = faceSequence[faceIndex];
+        console.log("four");
+        console.log(face);
+
+        isRotating = true;
+        rotate180Reverse(
+          face,
+          groupArray,
+          groupDirectionArray,
+          getGroupCenter,
+          sceneCenter,
+          () => {
+            isRotating = false;
+            reverseCounter += 1;
+          }
+        );
+      }
+    }
   }
   // === 状态判断：是否进入活跃模式（声音触发）===
-  // console.log(rawAmp);
   if (rawAmp > AMP_THRESHOLD) {
     lowAmpFrameCount = 0; // 重置静音计数
-    useMicRMS = true;
+    backToOriginalCenterColor = true;
   } else {
     lowAmpFrameCount++; // 否则累计静音帧数
-    // if (lowAmpFrameCount >= DEBOUNCE_FRAMES) {
-    //   isActive = false; // 超过一定帧数则视为不活跃
-    // }
   }
   if (backToOriginalCenter) {
     moveGroupsBackToOriginalCenter(() => {
@@ -443,21 +545,23 @@ function animate() {
   if (isBreathing) {
     let targetSpeed;
     let norm = 0;
+    let maxAmplitude = 10; // 默认值，后面根据输入类型动态设定
 
     if (useMicRMS) {
-      // 使用麦克风输入做 RMS（已经预处理）
+      maxAmplitude = 5;
       const micAmp = getMicAmplitude(); // 已经 sqrt(mean square)
       const micRms = micAmp / 128;
-      lastSmoothRms = lastSmoothRms * 0.7 + micRms * 0.3; // 💡 平滑处理
+      lastSmoothRms = lastSmoothRms * 0.7 + micRms * 0.3;
 
       const adjustedRms =
         lastSmoothRms > NOISE_FLOOR ? lastSmoothRms / RMS_MAX : 0;
       norm = THREE.MathUtils.clamp(adjustedRms, 0, 1);
-      targetSpeed = 0.013 + 0.22 * norm;
-      console.log("target speed is: ", targetSpeed);
+      targetSpeed = 0.005 + 0.06 * norm;
       if (Math.abs(targetSpeed - lastSpeed) > 0.009) {
         targetSpeed = lastSpeed + 0.009 * Math.sign(targetSpeed - lastSpeed);
       }
+
+      // 💡 useMicRMS 时最大伸缩幅度为 5
     } else if (useRemoteRMS) {
       analyserNode.getFloatTimeDomainData(audioDataArray);
       let sum = 0;
@@ -465,6 +569,37 @@ function animate() {
         sum += audioDataArray[i] * audioDataArray[i];
       }
       let currRms = Math.sqrt(sum / audioDataArray.length);
+      if (!isInSilentPhase) {
+        if (currRms < SILENT_RMS_THRESHOLD) {
+          silentFrameCount += 1;
+
+          if (silentFrameCount >= SILENT_FRAME_LIMIT) {
+            console.log("📍 Detected sentence boundary.");
+            if (isRotating) {
+              if (!getReversingMidway() && reverseCounter >= 3) {
+                setShouldReverseMidway(true);
+                normalDir = !normalDir;
+                reversed = true;
+                reverseCounter = 0;
+              }
+            } else {
+              normalDir = !normalDir;
+              reversed = true;
+              reverseCounter = 0;
+            }
+
+            isInSilentPhase = true;
+            silentFrameCount = 0;
+          }
+        } else {
+          silentFrameCount = 0;
+        }
+      } else {
+        if (currRms >= SILENT_RMS_THRESHOLD_UP) {
+          isInSilentPhase = false;
+        }
+      }
+
       lastSmoothRms = lastSmoothRms * 0.7 + currRms * 0.3;
       norm = lastSmoothRms > NOISE_FLOOR ? lastSmoothRms / RMS_MAX : 0;
       norm = Math.max(0, Math.min(1, norm));
@@ -473,11 +608,12 @@ function animate() {
       if (Math.abs(targetSpeed - lastSpeed) > 0.012) {
         targetSpeed = lastSpeed + 0.012 * Math.sign(targetSpeed - lastSpeed);
       }
+      setStep(Math.max(40, Math.abs(0.31 - targetSpeed) * 700));
+      maxAmplitude = 9; // 💡 useRemoteRMS 时最大伸缩幅度为 9
     } else {
-      targetSpeed = 0.013;
+      targetSpeed = 0.018;
+      maxAmplitude = 10;
     }
-
-    // ... 保持你后面的 phase 推进 和 amplitude 计算不变
 
     // 5. 平滑speed
     let lerpAlpha = 0.2;
@@ -490,11 +626,11 @@ function animate() {
 
     // 7. 动态最大伸缩幅度
     const minAmplitude = 1.2;
-    const maxAmplitude = 7;
     let dynamicAmplitude = minAmplitude + (maxAmplitude - minAmplitude) * norm;
 
     let rawMotionScale = dynamicAmplitude * wave;
     lastMotionScale = lastMotionScale * 0.9 + rawMotionScale * 0.1;
+
     for (let i = 1; i <= groupNum; i++) {
       const group = groupArray[i];
       const dir = groupDirectionArray[i];
@@ -503,6 +639,7 @@ function animate() {
       group.children.forEach((cube) => (cube.material.opacity = 1));
     }
   }
+
   controls.update(); // 更新 OrbitControls 控制器
   renderer.render(scene, camera); // 渲染当前帧
 }
@@ -579,9 +716,9 @@ async function pollBackendStatus() {
 const eventStateMap = {
   451: {
     doRotation: false,
-    backToOriginalCenterColor: false,
+    backToOriginalCenterColor: true,
     useRemoteRMS: false,
-    useMicRMS: true,
+    useMicRMS: false,
   },
   459: {
     doRotation: false,
@@ -589,19 +726,19 @@ const eventStateMap = {
   },
   550: {
     doRotation: true,
-    backToOriginalCenterColor: true,
+    backToOriginalCenterColor: false,
     useRemoteRMS: true,
     useMicRMS: false,
   },
   352: {
     doRotation: true,
-    backToOriginalCenterColor: true,
+    backToOriginalCenterColor: false,
     useRemoteRMS: true,
     useMicRMS: false,
   },
   359: {
     doRotation: true,
-    backToOriginalCenterColor: true,
+    backToOriginalCenterColor: false,
     useRemoteRMS: true,
     useMicRMS: false,
   },
@@ -702,7 +839,7 @@ stopBtn.onclick = async () => {
 };
 
 setTimeout(() => {
-  console.log("⏰ 页面已打开超过1分钟，自动停止");
+  console.log("⏰ 页面已打开超过5分钟，自动停止");
 
   fetch("https://realtimedialogue.onrender.com/stop", {
     method: "POST",

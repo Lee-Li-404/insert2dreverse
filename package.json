@@ -9,7 +9,7 @@
     "preview": "vite preview"
   },
   "devDependencies": {
-    "vite": "^6.3.5"
+    "vite": "^7.0.6"
   },
   "dependencies": {
     "file-saver": "^2.0.5",

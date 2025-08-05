@@ -2,6 +2,14 @@ import * as THREE from "three";
 import { rotationGroupingsMap180 } from "./rotationGroupingsMap180.js";
 import { rotationGroupings } from "./rotationGroupings.js";
 import { remove } from "three/examples/jsm/libs/tween.module.js";
+// === rotationutil.js ===
+
+import {
+  getShouldReverseMidway,
+  setShouldReverseMidway,
+  getReversingMidway,
+  setReversingMidway,
+} from "./main.js"; // ✅ 路径按你实际情况调整
 
 // Axis of rotation per face
 const faceAxes = {
@@ -43,6 +51,12 @@ export function getGroupOriginalCenter(num) {
   return new THREE.Vector3(x, y, z);
 }
 
+let steps = 65;
+
+export function setStep(val) {
+  steps = val;
+}
+
 export function rotate180(
   face,
   groupArray,
@@ -52,31 +66,142 @@ export function rotate180(
   onComplete
 ) {
   const axis = faceAxes[face];
-  const steps = 36;
   const totalAngle = Math.PI;
-  const delta = totalAngle / steps;
-  let step = 0;
-
   const groupIDs = faceGroups[face];
 
+  let accumulatedAngle = 0;
+  let currentDelta = 0;
+
   function animate() {
-    if (step < steps) {
+    if (getShouldReverseMidway() && !getReversingMidway()) {
+      setReversingMidway(true);
+      console.log("🔁 Midway reverse triggered (rotate180)");
+    }
+
+    if (getReversingMidway()) {
+      const targetDelta = totalAngle / steps;
+      currentDelta = THREE.MathUtils.lerp(currentDelta, targetDelta, 0.2);
+      const appliedDelta = Math.min(currentDelta, accumulatedAngle);
+
       for (const id of groupIDs) {
         const group = groupArray[id];
-        group.rotateOnWorldAxis(axis, delta);
+        group.rotateOnWorldAxis(axis.clone().negate(), appliedDelta);
 
-        // 每帧实时更新 group 朝向（用于 breathing 偏移）
         const newCenter = getGroupCenter(group);
         const newDir = newCenter.clone().sub(sceneCenter).normalize();
         groupDirectionArray[id] = newDir;
       }
 
-      step++;
+      accumulatedAngle -= appliedDelta;
+
+      if (accumulatedAngle <= 1e-5) {
+        setShouldReverseMidway(false);
+        setReversingMidway(false);
+        if (onComplete) onComplete();
+        return;
+      }
+
       requestAnimationFrame(animate);
-    } else {
+      return;
+    }
+
+    const remaining = totalAngle - accumulatedAngle;
+    if (remaining <= 1e-5) {
       applyRotationGroupMapping(face);
       if (onComplete) onComplete();
+      return;
     }
+
+    const targetDelta = totalAngle / steps;
+    currentDelta = THREE.MathUtils.lerp(currentDelta, targetDelta, 0.2);
+    const appliedDelta = Math.min(currentDelta, remaining);
+
+    for (const id of groupIDs) {
+      const group = groupArray[id];
+      group.rotateOnWorldAxis(axis, appliedDelta);
+
+      const newCenter = getGroupCenter(group);
+      const newDir = newCenter.clone().sub(sceneCenter).normalize();
+      groupDirectionArray[id] = newDir;
+    }
+
+    accumulatedAngle += appliedDelta;
+    requestAnimationFrame(animate);
+  }
+
+  animate();
+}
+
+export function rotate180Reverse(
+  face,
+  groupArray,
+  groupDirectionArray,
+  getGroupCenter,
+  sceneCenter,
+  onComplete
+) {
+  const axis = faceAxes[face].clone().negate(); // 初始就是反方向
+  const totalAngle = Math.PI;
+  const groupIDs = faceGroups[face];
+
+  let accumulatedAngle = 0;
+  let currentDelta = 0;
+
+  function animate() {
+    if (getShouldReverseMidway() && !getReversingMidway()) {
+      setReversingMidway(true);
+      console.log("🔁 Midway reverse triggered (rotate180Reverse)");
+    }
+
+    if (getReversingMidway()) {
+      const targetDelta = totalAngle / steps;
+      currentDelta = THREE.MathUtils.lerp(currentDelta, targetDelta, 0.2);
+      const appliedDelta = Math.min(currentDelta, accumulatedAngle);
+
+      for (const id of groupIDs) {
+        const group = groupArray[id];
+        group.rotateOnWorldAxis(axis.clone().negate(), appliedDelta); // 回正方向
+
+        const newCenter = getGroupCenter(group);
+        const newDir = newCenter.clone().sub(sceneCenter).normalize();
+        groupDirectionArray[id] = newDir;
+      }
+
+      accumulatedAngle -= appliedDelta;
+
+      if (accumulatedAngle <= 1e-5) {
+        setShouldReverseMidway(false);
+        setReversingMidway(false);
+        if (onComplete) onComplete();
+        return;
+      }
+
+      requestAnimationFrame(animate);
+      return;
+    }
+
+    const remaining = totalAngle - accumulatedAngle;
+    if (remaining <= 1e-5) {
+      applyRotationGroupMappingReverse(face);
+      if (onComplete) onComplete();
+      return;
+    }
+
+    const targetDelta = totalAngle / steps;
+    currentDelta = THREE.MathUtils.lerp(currentDelta, targetDelta, 0.2);
+    const appliedDelta = Math.min(currentDelta, remaining);
+
+    for (const id of groupIDs) {
+      const group = groupArray[id];
+      group.rotateOnWorldAxis(axis, appliedDelta);
+
+      const newCenter = getGroupCenter(group);
+      const newDir = newCenter.clone().sub(sceneCenter).normalize();
+      groupDirectionArray[id] = newDir;
+    }
+
+    accumulatedAngle += appliedDelta;
+    requestAnimationFrame(animate);
   }
 
   animate();
@@ -129,6 +254,29 @@ function applyRotationGroupMapping(face) {
         rotationGroupings[i] = mapping.new.slice();
 
         break; // ✅ Stop after finding the match
+      }
+    }
+  }
+}
+
+function applyRotationGroupMappingReverse(face) {
+  for (let i = 1; i <= 8; i++) {
+    const currentFaces = rotationGroupings[i];
+
+    for (const mapping of rotationGroupingsMap180) {
+      if (
+        mapping.rotation === face &&
+        arraysEqualIgnoreOrder(mapping.new, currentFaces) // ⬅️ 注意顺序反了
+      ) {
+        for (let k = 0; k < 3; k++) {
+          removeValue(faceGroups[currentFaces[k]], i);
+        }
+        for (let k = 0; k < 3; k++) {
+          addUnique(faceGroups[mapping.cube[k]], i);
+        }
+
+        rotationGroupings[i] = mapping.cube.slice(); // ⬅️ 设置为原始 cube 面
+        break;
       }
     }
   }
