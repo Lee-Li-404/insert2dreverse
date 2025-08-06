@@ -57,9 +57,9 @@ let lastMotionScale = 1; // 初始幅度，设你动效一开始的缩放即可
 let phase = 0;
 
 let silentFrameCount = 0;
-const SILENT_RMS_THRESHOLD = 0.003;
+const SILENT_RMS_THRESHOLD = 0.00195;
 const SILENT_RMS_THRESHOLD_UP = 0.01;
-const SILENT_FRAME_LIMIT = 3;
+const SILENT_FRAME_LIMIT = 4;
 let isInSilentPhase = false;
 
 // === main.js ===
@@ -67,7 +67,7 @@ let isInSilentPhase = false;
 let shouldReverseMidway = false;
 let reversingMidway = false;
 
-let reverseCounter = 0;
+let reverseCounter = 1;
 
 export function setShouldReverseMidway(val) {
   shouldReverseMidway = val;
@@ -345,7 +345,7 @@ function animate() {
         console.log("one");
         console.log(face);
         isRotating = true;
-        rotate180Reverse(
+        rotate180(
           face,
           groupArray,
           groupDirectionArray,
@@ -388,7 +388,7 @@ function animate() {
         console.log(face);
 
         isRotating = true;
-        rotate180(
+        rotate180Reverse(
           face,
           groupArray,
           groupDirectionArray,
@@ -575,18 +575,23 @@ function animate() {
 
           if (silentFrameCount >= SILENT_FRAME_LIMIT) {
             console.log("📍 Detected sentence boundary.");
+            console.log(reverseCounter);
             if (isRotating) {
               if (!getReversingMidway() && reverseCounter >= 3) {
-                setShouldReverseMidway(true);
-                normalDir = !normalDir;
-                reversed = true;
-                reverseCounter = 0;
+                setTimeout(() => {
+                  console.log("reversed!!!⚠️");
+                  setShouldReverseMidway(true);
+                  normalDir = !normalDir;
+                  reversed = true;
+                  reverseCounter = 0;
+                }, 30);
               }
-            } else {
-              normalDir = !normalDir;
-              reversed = true;
-              reverseCounter = 0;
             }
+            // } else {
+            //   normalDir = !normalDir;
+            //   reversed = true;
+            //   reverseCounter = 0;
+            // }
 
             isInSilentPhase = true;
             silentFrameCount = 0;
