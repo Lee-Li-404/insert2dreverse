@@ -1,50 +1,60 @@
 <!DOCTYPE html>
 <html lang="en">
   <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-    <link
-      href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css"
-      rel="stylesheet"
-    />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Vite App</title>
+    <meta charset="utf-8" />
+    <title>Marching Cubes Voice State Demo</title>
     <style>
       body {
         margin: 0;
-      }
-      button {
-        padding: 10px 20px;
-        font-size: 16px;
-        border: none;
-        border-radius: 6px;
-        margin: 10px;
-        cursor: pointer;
-        transition: all 0.2s ease;
-        color: white;
+        overflow: hidden;
+        background: #000;
       }
 
-      #startBtn {
-        background-color: #4caf50;
-      }
-      #startBtn:hover {
-        background-color: #45a049;
-        transform: scale(1.05);
+      canvas {
+        display: block;
       }
 
-      #stopBtn {
-        background-color: #f44336;
-      }
-      #stopBtn:hover {
-        background-color: #d32f2f;
-        transform: scale(1.05);
+      #state-indicator {
+        position: absolute;
+        top: 10px;
+        left: 10px;
+        padding: 6px 12px;
+        background: rgba(255, 255, 255, 0.1);
+        color: #fff;
+        font-family: sans-serif;
+        font-size: 14px;
+        border-radius: 4px;
+        pointer-events: none;
       }
     </style>
+
+    <!-- Importmap -->
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.160.1/build/three.module.js",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.1/examples/jsm/"
+        }
+      }
+    </script>
   </head>
+
   <body>
-    <div id="app"></div>
+    <div id="state-indicator">State: <span id="current-state">X</span></div>
+
+    <!-- Main logic -->
     <script type="module" src="/src/main.js"></script>
-    <button id="startBtn">Start</button>
-    <button id="stopBtn">Stop</button>
+
+    <!-- Optional: demo state switching via console -->
+    <script>
+      // For quick testing in console
+      window.setWaterState?.("X"); // default
+      window.setWaterState = (function (original) {
+        return function (state) {
+          document.getElementById("current-state").textContent = state;
+          original(state);
+        };
+      })(window.setWaterState || (() => {}));
+    </script>
   </body>
 </html>
