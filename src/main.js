@@ -5,7 +5,7 @@ import { generateRandomShapeGeometry, hexVerts } from "./shapes.js";
 // === Scene ===
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x000000);
-
+// scene.background = new THREE.Color(0x121822); // 深蓝灰色调
 const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.01, 10);
 camera.position.z = 1;
 
@@ -47,7 +47,7 @@ const wpos2 = new THREE.Vector2();
 function ballInsideHexWorld(b) {
   b.mesh.getWorldPosition(wp); // 取小球的世界坐标
   wpos2.set(wp.x, wp.y);
-  return pointInPolygon(wpos2, hexVerts);
+  return pointInConvexPolygon(wpos2); // 用你原来的六边形判定函数
 }
 
 // === Hex geometry + collision ===
@@ -71,21 +71,18 @@ for (let i = 0; i < 6; i++) {
     new THREE.Vector2(Math.cos(a) * HEX_RADIUS, Math.sin(a) * HEX_RADIUS)
   );
 }
-function pointInPolygon(point, vertices) {
-  let inside = false;
-  const x = point.x,
-    y = point.y;
-  for (let i = 0, j = vertices.length - 1; i < vertices.length; j = i++) {
-    const xi = vertices[i].x,
-      yi = vertices[i].y;
-    const xj = vertices[j].x,
-      yj = vertices[j].y;
+function pointInConvexPolygon(p) {
+  const len = hexVerts.length;
+  if (len < 3) return false; // 防御，至少三角形才能成立
 
-    const intersect =
-      yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi;
-    if (intersect) inside = !inside;
+  for (let i = 0; i < len; i++) {
+    const a = hexVerts[i];
+    const b = hexVerts[(i + 1) % len];
+    const ab = new THREE.Vector2(b.x - a.x, b.y - a.y);
+    const ap = new THREE.Vector2(p.x - a.x, p.y - a.y);
+    if (ab.x * ap.y - ab.y * ap.x < 0) return false;
   }
-  return inside;
+  return true;
 }
 
 function pointInSquare(localPos, halfSize) {
@@ -168,15 +165,15 @@ const glassMat = new THREE.ShaderMaterial({
     }
   `,
 });
-const backMat = new THREE.MeshBasicMaterial({ color: 0x0c0c0c });
+const backMat = new THREE.MeshBasicMaterial({ color: 0x090909 });
 
 // === Helpers ===
 function rand(range = 0.6) {
   return (Math.random() * 2 - 1) * range;
 }
-async function ensureRandomShapeMeshes() {
+function ensureRandomShapeMeshes() {
   if (!hexMesh) {
-    const geo = await generateRandomShapeGeometry(HEX_RADIUS);
+    const geo = generateRandomShapeGeometry(HEX_RADIUS);
     hexMesh = new THREE.Mesh(geo, glassMat);
   }
   if (!backMesh) {
@@ -225,7 +222,7 @@ function addSquareBallPair() {
     new THREE.MeshBasicMaterial({
       color,
       transparent: true, // 必须要开启
-      opacity: 0.3, // 0~1 之间
+      opacity: 0.4, // 0~1 之间
     })
   );
   meshBall.position.set(0, 0, -0.01);
@@ -302,13 +299,13 @@ function pushOutThenGather() {
 }
 
 // === 从“方块形态”聚拢到“六边形形态” ===
-async function gatherToHex() {
+function gatherToHex() {
   if (!exploded) return; // 只有在方块形态才能聚拢
   exploded = false;
 
   hexMesh = null;
   backMesh = null;
-  await ensureRandomShapeMeshes();
+  ensureRandomShapeMeshes();
 
   // 关键：六边形刚出现时“完全黑”
   hexAcceptLights = false;
@@ -461,7 +458,9 @@ function animate() {
 
     if (!exploded) {
       // 六边形判定（世界坐标；球在 hex 模式下是场景子节点）
-      inside = pointInPolygon(new THREE.Vector2(wp.x, wp.y), hexVerts);
+      inside = pointInConvexPolygon(
+        new THREE.Vector2(m.position.x, m.position.y)
+      );
     } else {
       // 方块局部判定（球是方块子节点）
       const local = m.position;
@@ -533,9 +532,9 @@ function animate() {
     // 如果还没开灯，就检测是否有小球接触到 hex
     if (!hexAcceptLights) {
       for (const b of balls) {
-        b.mesh.getWorldPosition(wp);
-        if (pointInPolygon(new THREE.Vector2(wp.x, wp.y), hexVerts)) {
-          hexAcceptLights = true;
+        if (ballInsideHexWorld(b)) {
+          // 用第一步新加的函数
+          hexAcceptLights = true; // 一旦接触立即亮灯
           break;
         }
       }
