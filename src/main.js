@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import gsap from "gsap";
+import { generateRandomShapeGeometry, hexVerts } from "./shapes.js";
 
 // === Scene ===
 const scene = new THREE.Scene();
@@ -32,7 +33,7 @@ resize();
 let exploded = true; // 默认：方块形态
 let squareBlocks = []; // 每个小球对应的方块
 const SQUARE_SIZE = 0.15; // 方块边长
-const BALL_RADIUS = 0.0000015;
+const BALL_RADIUS = 0.015;
 
 const center = new THREE.Vector3(0, 0, 0);
 const balls = []; // { mesh, color, vel, state, containerMesh?, bounds? }
@@ -40,6 +41,14 @@ const balls = []; // { mesh, color, vel, state, containerMesh?, bounds? }
 const HEX_RADIUS = 0.28;
 let hexMesh = null;
 let backMesh = null;
+let hexAcceptLights = false; // 关键：六边形是否开始接收光（控制“提前亮”）
+
+const wpos2 = new THREE.Vector2();
+function ballInsideHexWorld(b) {
+  b.mesh.getWorldPosition(wp); // 取小球的世界坐标
+  wpos2.set(wp.x, wp.y);
+  return pointInPolygon(wpos2, hexVerts);
+}
 
 // === Hex geometry + collision ===
 function buildHexShape(radius) {
@@ -56,23 +65,29 @@ function buildHexShape(radius) {
 }
 const hexGeo = new THREE.ShapeGeometry(buildHexShape(HEX_RADIUS));
 
-const hexVerts = [];
 for (let i = 0; i < 6; i++) {
   const a = (i / 6) * Math.PI * 2;
   hexVerts.push(
     new THREE.Vector2(Math.cos(a) * HEX_RADIUS, Math.sin(a) * HEX_RADIUS)
   );
 }
-function pointInConvexPolygon(p) {
-  for (let i = 0; i < 6; i++) {
-    const a = hexVerts[i],
-      b = hexVerts[(i + 1) % 6];
-    const ab = new THREE.Vector2(b.x - a.x, b.y - a.y);
-    const ap = new THREE.Vector2(p.x - a.x, p.y - a.y);
-    if (ab.x * ap.y - ab.y * ap.x < 0) return false;
+function pointInPolygon(point, vertices) {
+  let inside = false;
+  const x = point.x,
+    y = point.y;
+  for (let i = 0, j = vertices.length - 1; i < vertices.length; j = i++) {
+    const xi = vertices[i].x,
+      yi = vertices[i].y;
+    const xj = vertices[j].x,
+      yj = vertices[j].y;
+
+    const intersect =
+      yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi;
+    if (intersect) inside = !inside;
   }
-  return true;
+  return inside;
 }
+
 function pointInSquare(localPos, halfSize) {
   return (
     localPos.x >= -halfSize &&
@@ -159,15 +174,18 @@ const backMat = new THREE.MeshBasicMaterial({ color: 0x0c0c0c });
 function rand(range = 0.6) {
   return (Math.random() * 2 - 1) * range;
 }
-function ensureHexMeshes() {
-  if (!hexMesh) hexMesh = new THREE.Mesh(hexGeo, glassMat);
+async function ensureRandomShapeMeshes() {
+  if (!hexMesh) {
+    const geo = await generateRandomShapeGeometry(HEX_RADIUS);
+    hexMesh = new THREE.Mesh(geo, glassMat);
+  }
   if (!backMesh) {
-    backMesh = new THREE.Mesh(hexGeo, backMat);
+    backMesh = new THREE.Mesh(hexMesh.geometry.clone(), backMat);
     backMesh.position.z = -0.01;
   }
 }
+
 function startSquareMotion(meshSquare) {
-  // 递归随机漫步（可叠加），简单粗暴够用；如需更严谨可存 tween 引用并 kill
   const hop = () => {
     gsap.to(meshSquare.position, {
       x: rand(0.65),
@@ -180,12 +198,12 @@ function startSquareMotion(meshSquare) {
   hop();
 }
 
-// === 方块形态：新增「方块 + 小球」一对（随机位置 + parenting） ===
+// === 方块形态：新增一对（方块 + 小球, 球作为子节点） ===
 function addSquareBallPair() {
   const x = rand(0.55);
   const y = rand(0.55);
 
-  // 方块（单独克隆 shader + 半径更小）
+  // 方块材质（独立 uniforms）
   const mat = glassMat.clone();
   mat.uniforms = THREE.UniformsUtils.clone(glassMat.uniforms);
   mat.uniforms.uLightCount.value = 1;
@@ -200,17 +218,21 @@ function addSquareBallPair() {
   scene.add(meshSquare);
   squareBlocks.push(meshSquare);
 
-  // 球（成为方块的子节点：方块动，球跟着动）
+  // 球（方块子节点）
   const color = new THREE.Color().setHSL(Math.random(), 0.75, 0.55);
   const meshBall = new THREE.Mesh(
     new THREE.CircleGeometry(BALL_RADIUS, 32),
-    new THREE.MeshBasicMaterial({ color })
+    new THREE.MeshBasicMaterial({
+      color,
+      transparent: true, // 必须要开启
+      opacity: 0.3, // 0~1 之间
+    })
   );
-  meshBall.position.set(0, 0, -0.01); // 局部坐标
+  meshBall.position.set(0, 0, -0.01);
   meshSquare.add(meshBall);
 
   const ball = {
-    mesh: meshBall, // 现在是“局部坐标”的球
+    mesh: meshBall,
     color,
     vel: new THREE.Vector2(), // 局部速度
     state: "INSIDE",
@@ -219,13 +241,13 @@ function addSquareBallPair() {
   };
   balls.push(ball);
 
-  // 初始化 shader 的光源位置（需要世界坐标）
+  // 初始化方块 shader 的光源（世界坐标）
   const wp = new THREE.Vector3();
   meshBall.getWorldPosition(wp);
   mat.uniforms.uLightPos.value[0] = new THREE.Vector2(wp.x, wp.y);
   mat.uniforms.uLightColor.value[0] = color.clone();
 
-  // 动效
+  // 弹入动画 + 随机移动
   gsap.from(meshSquare.scale, {
     x: 0.01,
     y: 0.01,
@@ -238,38 +260,82 @@ function addSquareBallPair() {
     duration: 0.4,
     ease: "back.out(1.7)",
   });
-
-  // 方块随机移动
   startSquareMotion(meshSquare);
 }
 
-// === 从“方块形态”聚拢到“六边形形态” ===
-function gatherToHex() {
+// === push out：把所有方块推出 hex 外圈（六边形先不出现） ===
+function pushOutThenGather() {
+  // 这里只会在方块形态调用
   if (!exploded) return;
+
+  const lightRadius = 0.2;
+  const marginFactor = 3;
+  const outerRadius = HEX_RADIUS + lightRadius * marginFactor;
+
+  const tl = gsap.timeline();
+
+  for (const b of balls) {
+    if (!b.containerMesh) continue;
+
+    const sq = b.containerMesh;
+    // 停掉随机漫步，避免冲突
+    gsap.killTweensOf(sq.position);
+
+    // 以当前世界方向推出到 outerRadius
+    const wp = new THREE.Vector3();
+    sq.getWorldPosition(wp);
+    let dir = new THREE.Vector2(wp.x, wp.y);
+    if (dir.lengthSq() < 1e-6) {
+      const ang = Math.random() * Math.PI * 2;
+      dir.set(Math.cos(ang), Math.sin(ang));
+    } else {
+      dir.normalize();
+    }
+    const tx = dir.x * outerRadius;
+    const ty = dir.y * outerRadius;
+
+    tl.to(sq.position, { x: tx, y: ty, duration: 0.45, ease: "power2.out" }, 0);
+  }
+
+  // 等 1 秒让球（子节点）跟上，再开始 gather
+  tl.add(() => setTimeout(gatherToHex, 1000));
+}
+
+// === 从“方块形态”聚拢到“六边形形态” ===
+async function gatherToHex() {
+  if (!exploded) return; // 只有在方块形态才能聚拢
   exploded = false;
 
-  ensureHexMeshes();
+  hexMesh = null;
+  backMesh = null;
+  await ensureRandomShapeMeshes();
 
+  // 关键：六边形刚出现时“完全黑”
+  hexAcceptLights = false;
+  glassUniforms.uLightCount.value = 0;
+  glassUniforms.uIntensity.value = 0;
+
+  if (!scene.children.includes(backMesh)) scene.add(backMesh);
+  if (!scene.children.includes(hexMesh)) scene.add(hexMesh);
+
+  // 收拢动画：把方块（连带子球）移动到中心
   const tl = gsap.timeline({
     onComplete: () => {
-      // 1) 先把六边形加进场景（现在才出现）
-      if (!scene.children.includes(hexMesh)) scene.add(hexMesh);
-      if (!scene.children.includes(backMesh)) scene.add(backMesh);
+      // 收拢完成：把“球”从方块里拿出来放到场景里（进入世界坐标系）
+      const wp = new THREE.Vector3();
 
-      // 2) 解除 parent：把球摘出来保持世界坐标不跳
-      for (const b of balls) {
-        if (b.containerMesh) {
-          const wp = new THREE.Vector3();
-          b.mesh.getWorldPosition(wp);
-          scene.add(b.mesh);
-          b.mesh.position.copy(wp).setZ(-0.01);
-          b.containerMesh = null;
-          b.bounds = null;
-        }
+      balls.forEach((b) => {
+        if (!b.containerMesh) return;
+        b.mesh.getWorldPosition(wp);
+        scene.add(b.mesh);
+        b.mesh.position.copy(wp).setZ(-0.01);
+
+        b.containerMesh = null;
+        b.bounds = null;
         b.state = "OUTSIDE";
-      }
+      });
 
-      // 3) 移除所有方块
+      // 清理 & 移除所有方块
       squareBlocks.forEach((sq) => {
         gsap.killTweensOf(sq.position);
         sq.geometry.dispose();
@@ -278,22 +344,25 @@ function gatherToHex() {
       });
       squareBlocks = [];
 
-      // 4) 恢复六边形 shader 参数
-      glassUniforms.uRadiusWorld.value = 0.5;
-      glassUniforms.uIntensity.value = 0.75;
+      // 再开灯：允许 hex 接收光（动画淡入强度）
+      hexAcceptLights = true;
+      gsap.to(glassUniforms.uIntensity, {
+        value: 0.75,
+        duration: 0.3,
+        ease: "power1.inOut",
+      });
     },
   });
 
-  // 收拢动画（此时 hex 还没加进场景，不会显示）
   for (const b of balls) {
-    if (b.containerMesh) {
-      const sq = b.containerMesh;
-      tl.to(
-        sq.position,
-        { x: 0, y: 0, duration: 0.8, ease: "power2.inOut" },
-        0
-      );
-    }
+    const sq = b.containerMesh;
+    if (!sq) continue;
+    tl.to(sq.position, { x: 0, y: 0, duration: 0.8, ease: "power2.inOut" }, 0);
+    tl.to(
+      sq.rotation,
+      { z: `+=${Math.PI * 2}`, duration: 0.8, ease: "power2.inOut" },
+      0
+    );
   }
 }
 
@@ -301,6 +370,7 @@ function gatherToHex() {
 function explodeFromHex() {
   if (exploded) return;
   exploded = true;
+  hexAcceptLights = false;
 
   // 从场景移除六边形
   if (hexMesh) scene.remove(hexMesh);
@@ -351,7 +421,7 @@ function explodeFromHex() {
   });
 }
 
-// === 键盘：A 新增；S 聚拢/炸回 ===
+// === 键盘：A 新增；S pushout→等待→gather；S（hex模式）炸回 ===
 window.addEventListener("keydown", (e) => {
   const k = e.key.toLowerCase();
   if (k === "a") {
@@ -364,9 +434,11 @@ window.addEventListener("keydown", (e) => {
   }
   if (k === "s") {
     if (exploded) {
-      gatherToHex(); // 方块形态：聚拢成六边形
+      // 方块形态：先推到外圈，等 1s，再 gather
+      pushOutThenGather();
     } else {
-      explodeFromHex(); // 六边形形态：再炸回方块（可选）
+      // 六边形形态：炸回方块
+      explodeFromHex();
     }
   }
 });
@@ -377,6 +449,7 @@ addSquareBallPair();
 // === Animate ===
 const clock = new THREE.Clock();
 const tmpV2 = new THREE.Vector2();
+const wp = new THREE.Vector3();
 
 function animate() {
   requestAnimationFrame(animate);
@@ -387,10 +460,8 @@ function animate() {
     let inside = false;
 
     if (!exploded) {
-      // 六边形判定（世界坐标）
-      inside = pointInConvexPolygon(
-        new THREE.Vector2(m.position.x, m.position.y)
-      );
+      // 六边形判定（世界坐标；球在 hex 模式下是场景子节点）
+      inside = pointInPolygon(new THREE.Vector2(wp.x, wp.y), hexVerts);
     } else {
       // 方块局部判定（球是方块子节点）
       const local = m.position;
@@ -403,10 +474,9 @@ function animate() {
     else if (b.state === "INSIDE" && !inside) b.state = "ESCAPING";
     else if (b.state === "ESCAPING" && inside) b.state = "INSIDE";
 
-    // 加速度/力
+    // 力 / 加速度
     const acc = new THREE.Vector2();
     if (!exploded) {
-      // 六边形：以中心吸引（世界坐标）
       if (b.state === "OUTSIDE") {
         acc
           .set(center.x - m.position.x, center.y - m.position.y)
@@ -426,7 +496,7 @@ function animate() {
           .multiplyScalar(0.9);
       }
     } else {
-      // 方块：局部力学（方块中心即 (0,0)）
+      // 方块局部力学
       const local = m.position;
       if (b.state === "OUTSIDE") {
         acc.set(-local.x, -local.y).normalize().multiplyScalar(2.5);
@@ -452,34 +522,49 @@ function animate() {
       b.vel.set(Math.cos(ang), Math.sin(ang)).multiplyScalar(0.05);
     }
 
-    // 位移：六边形形态下，球在世界坐标移动；方块形态下，球在局部坐标移动
+    // 位移
     m.position.x += b.vel.x * dt;
     m.position.y += b.vel.y * dt;
   }
 
+  // 六边形形态：更新统一 shader 的光源（只有 hexAcceptLights==true 才接光）
   // 六边形形态：更新统一 shader 的光源
   if (!exploded && hexMesh) {
-    const trapped = balls.filter((b) =>
-      pointInConvexPolygon(
-        new THREE.Vector2(b.mesh.position.x, b.mesh.position.y)
-      )
-    );
-    const n = Math.min(trapped.length, MAX_LIGHTS);
-    glassUniforms.uLightCount.value = n;
-    glassUniforms.uIntensity.value = 0.75 / Math.pow(Math.max(1, n), 0.3);
-    for (let i = 0; i < n; i++) {
-      const b = trapped[i];
-      glassUniforms.uLightPos.value[i].set(
-        b.mesh.position.x,
-        b.mesh.position.y
-      );
-      glassUniforms.uLightColor.value[i].copy(b.color);
+    // 如果还没开灯，就检测是否有小球接触到 hex
+    if (!hexAcceptLights) {
+      for (const b of balls) {
+        b.mesh.getWorldPosition(wp);
+        if (pointInPolygon(new THREE.Vector2(wp.x, wp.y), hexVerts)) {
+          hexAcceptLights = true;
+          break;
+        }
+      }
+    }
+
+    if (!hexAcceptLights) {
+      glassUniforms.uLightCount.value = 0; // 继续全黑
+    } else {
+      // 统计所有在 hex 内的小球
+      const trapped = [];
+      for (const b of balls) {
+        if (ballInsideHexWorld(b)) trapped.push(b);
+      }
+
+      const n = Math.min(trapped.length, MAX_LIGHTS);
+      glassUniforms.uLightCount.value = n;
+      glassUniforms.uIntensity.value = 0.75 / Math.pow(Math.max(1, n), 0.3);
+
+      for (let i = 0; i < n; i++) {
+        const bb = trapped[i];
+        bb.mesh.getWorldPosition(wp); // 用世界坐标更新光源
+        glassUniforms.uLightPos.value[i].set(wp.x, wp.y);
+        glassUniforms.uLightColor.value[i].copy(bb.color);
+      }
     }
   }
 
   // 方块形态：每个方块自己的 shader 用球的世界坐标
   if (exploded) {
-    const wp = new THREE.Vector3();
     for (const b of balls) {
       if (!b.containerMesh) continue;
       b.mesh.getWorldPosition(wp);
