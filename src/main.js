@@ -170,79 +170,100 @@ function spawnBall() {
 }
 
 // === Snapshot logic ===
-function snapshotAndExplode() {
-  // 1) 暂时隐藏小球，避免被拍进贴图
+function snapshotAndExplodeHexTriangles({ uvInset = 0.08 } = {}) {
+  // 1) 暂时隐藏小球，避免拍进贴图（光效仍通过 uniforms 保留）
   balls.forEach((b) => (b.mesh.visible = false));
 
-  // 2) 截屏到 RenderTarget（包含玻璃光效）
+  // 2) 把当前场景渲染到 RT（用主 camera，保持和屏幕一致）
   const rt = new THREE.WebGLRenderTarget(window.innerWidth, window.innerHeight);
   rt.texture.colorSpace = THREE.SRGBColorSpace;
   renderer.setRenderTarget(rt);
   renderer.render(scene, camera);
   renderer.setRenderTarget(null);
 
-  // 3) 恢复小球显示
+  // 3) 恢复小球
   balls.forEach((b) => (b.mesh.visible = true));
 
-  // 4) 移除原六边形（用碎片替代）
-  if (hexMesh) scene.remove(hexMesh);
-  if (backMesh) scene.remove(backMesh);
-
-  // 5) 六边形顶点（世界坐标）
-  const verts = [];
+  // 4) 先算出六边形的世界顶点（别急着移除 hexMesh）
+  const hexWorldVerts = [];
   for (let i = 0; i < 6; i++) {
     const a = (i / 6) * Math.PI * 2;
-    verts.push(
-      new THREE.Vector3(Math.cos(a) * HEX_RADIUS, Math.sin(a) * HEX_RADIUS, 0)
+    const local = new THREE.Vector3(
+      Math.cos(a) * HEX_RADIUS,
+      Math.sin(a) * HEX_RADIUS,
+      0
     );
+    const world = local.clone().applyMatrix4(hexMesh.matrixWorld);
+    hexWorldVerts.push(world);
   }
-  const centerV = new THREE.Vector3(0, 0, 0);
+  const centerWorld = new THREE.Vector3(0, 0, 0).applyMatrix4(
+    hexMesh.matrixWorld
+  );
 
-  // —— 用屏幕坐标计算 UV —— //
+  // 5) 用主相机把世界点投到屏幕 UV（[0,1]）
   const worldToUv = (v3) => {
-    const p = v3.clone();
-    // 如果你的六边形有位移/旋转/缩放，改成：p.applyMatrix4(hexMesh.matrixWorld);
-    p.project(camera); // NDC [-1,1]
+    const p = v3.clone().project(camera); // NDC [-1,1]
     return new THREE.Vector2((p.x + 1) * 0.5, (p.y + 1) * 0.5); // UV [0,1]
   };
 
-  // 6) 所有碎片共用一个材质（同一张 snapshot 纹理）
+  // 6) 共享一个 snapshot 材质（所有碎片共用同一张贴图）
   const sharedMat = new THREE.MeshBasicMaterial({
     map: rt.texture,
     transparent: true,
     side: THREE.DoubleSide,
   });
 
-  // 7) 生成 6 片三角碎片（中心 + 邻接两顶点），每片自有屏幕UV
+  // 7) 准备爆裂：移除原 hex / 背板
+  if (hexMesh) scene.remove(hexMesh);
+  if (backMesh) scene.remove(backMesh);
+
+  // 8) 生成 6 片三角碎片（中心 + 邻边两个顶点），UV 用屏幕 UV，并做内缩
   const fragments = [];
   for (let i = 0; i < 6; i++) {
-    const v1 = centerV;
-    const v2 = verts[i];
-    const v3 = verts[(i + 1) % 6];
+    const w1 = centerWorld; // 世界坐标
+    const w2 = hexWorldVerts[i];
+    const w3 = hexWorldVerts[(i + 1) % 6];
 
-    // 顶点位置（真正的三角面）
+    // 顶点位置：把碎片直接放在世界坐标原位
     const positions = new Float32Array([
-      v1.x,
-      v1.y,
-      0,
-      v2.x,
-      v2.y,
-      0,
-      v3.x,
-      v3.y,
-      0,
+      w1.x,
+      w1.y,
+      w1.z,
+      w2.x,
+      w2.y,
+      w2.z,
+      w3.x,
+      w3.y,
+      w3.z,
     ]);
 
-    // 屏幕空间 UV（保证每片采样的是自己对应的截图区域）
-    const uv1 = worldToUv(v1);
-    const uv2 = worldToUv(v2);
-    const uv3 = worldToUv(v3);
-    const uvs = new Float32Array([uv1.x, uv1.y, uv2.x, uv2.y, uv3.x, uv3.y]);
+    // 屏幕 UV（对应 snapshot）
+    const uv1 = worldToUv(w1);
+    const uv2 = worldToUv(w2);
+    const uv3 = worldToUv(w3);
 
+    // UV 内缩（留边距，防止边界采样到外面背景/发黑）
+    const cx = (uv1.x + uv2.x + uv3.x) / 3;
+    const cy = (uv1.y + uv2.y + uv3.y) / 3;
+    const inset = (uv, k) =>
+      new THREE.Vector2(cx + (uv.x - cx) * (1 - k), cy + (uv.y - cy) * (1 - k));
+    const uv1i = inset(uv1, uvInset);
+    const uv2i = inset(uv2, uvInset);
+    const uv3i = inset(uv3, uvInset);
+
+    const uvs = new Float32Array([
+      uv1i.x,
+      uv1i.y,
+      uv2i.x,
+      uv2i.y,
+      uv3i.x,
+      uv3i.y,
+    ]);
+
+    // 真·三角面（填满）
     const triGeo = new THREE.BufferGeometry();
     triGeo.setAttribute("position", new THREE.BufferAttribute(positions, 3));
     triGeo.setAttribute("uv", new THREE.BufferAttribute(uvs, 2));
-    // 索引明示为一个三角面，确保“填满”而不是线
     triGeo.setIndex([0, 1, 2]);
 
     const triMesh = new THREE.Mesh(triGeo, sharedMat);
@@ -250,35 +271,35 @@ function snapshotAndExplode() {
     fragments.push(triMesh);
   }
 
-  // 8) 爆裂动画（可选）
+  // 9) 爆裂动画（可选）
   fragments.forEach((frag, i) => {
     const angle = (i / fragments.length) * Math.PI * 2;
-    const r = 0.65; // 爆裂半径，想更大就调大
-    const target = { x: Math.cos(angle) * r, y: Math.sin(angle) * r };
+    const r = 0.65;
+    const tx = Math.cos(angle) * r;
+    const ty = Math.sin(angle) * r;
 
     if (typeof gsap !== "undefined") {
       gsap.to(frag.position, {
-        x: target.x,
-        y: target.y,
+        x: tx,
+        y: ty,
         duration: 1.1,
         ease: "power2.out",
       });
       gsap.to(frag.rotation, { z: Math.PI * 2, duration: 1.1 });
     } else {
-      // 没引入 gsap 就直接瞬移，防报错
-      frag.position.set(target.x, target.y, 0);
+      frag.position.set(tx, ty, frag.position.z);
       frag.rotation.z = Math.PI * 2;
     }
   });
 
   console.log(
-    "💥 exploded into 6 screen-UV mapped triangles (filled, no black)."
+    "💥 snapshot→world-projected UV→inset→6 filled triangles. No black."
   );
 }
 
 window.addEventListener("keydown", (e) => {
   if (e.key.toLowerCase() === "a") spawnBall();
-  if (e.key.toLowerCase() === "s") snapshotAndExplode();
+  if (e.key.toLowerCase() === "s") snapshotAndExplodeHexTriangles();
 });
 
 // === Animate ===
